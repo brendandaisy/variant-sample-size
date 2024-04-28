@@ -1,62 +1,100 @@
 library(tidyverse)
-library(furrr)
 library(cowplot)
+library(MASS, exclude=c("select"))
 
 source("src/growth-model.R")
 
-# TODO: may need to update for unknown t0?
-# voc_detect_prob <- function(tmax, q, n, nsim=10000) {
-#     sims <- map_lgl(1:nsim, ~any(rbinom(tmax, n, q[1:tmax]) > 0))
-#     mean(sims)
-# }
-
-# `nsim` number of samples from sim to use. Default is to shuffle all of them. Set to NULL to not shuffle
-# `...` control arguments passed to gm_proflik_optim
-voc_growth_ci_mc <- function(sim_true, nsim=length(ytrue), level=0.95, ...) {
-    if (!is.null(nsim)) {
-        y <- sample(sim_true$y, nsim) # shuffle/downsample true data
-    } else
-        y <- sim_true$y
-    
-    mle <- furrr::future_map_dfr(y, \(y) gm_proflik_optim(y, sim_true$n, sim_true$q0, ...))
-    
-    quants <- c((1 - level)/2, (1 + level)/2)
-    ci <- quantile(mle$r, quants)
-    return(list(
-        y=y,
-        mle=mle,
-        ci=ci,
-        error=max(abs(ci - sim_true$r)),
-        cv=sd(mle$r) / sim_true$r,
-        cv_obs=sd(mle$r) / mean(mle$r)
-    ))
+obs_info_mat <- function(n, a, eterm) {
+    q <- 1 / (1 + a*eterm)
+    diag(n / (q*(1-q)))
 }
 
-voc_fin_prev_ci_mc <- function(sim_true, nsim=length(ytrue), level=0.95, ...) {
-    if (!is.null(nsim)) {
-        y <- sample(sim_true$y, nsim) # shuffle/downsample true data
-    } else
-        y <- sim_true$y
+info_mat <- function(n, tmax, t0, q0, r) {
+    a <- 1/q0 - 1
+    ts <- seq((1 - t0)%%1, tmax-t0, 1)
+    eterm <- exp(-r * ts)
+    denom <- (1 + a*eterm)^2
+    J <- matrix(c(
+        a * ts * eterm / denom,
+        -a * r * eterm / denom
+    ), ncol=2)
+    O <- obs_info_mat(n, a, eterm)
+    return(t(J) %*% O %*% J)
+}
+
+cov <- solve(info_mat(1000, 60, 4.5, 1e-4, 0.11))
+mle_approx <- MASS::mvrnorm(1000, c(0.11, 5.5), cov)
+colnames(mle_approx) <- c("r", "t0")
+
+mle_approx |> 
+    as_tibble() |> 
+    ggplot(aes(r, t0)) +
+    geom_density_2d()
+
+ggplot() +
+    geom_function(fun=~dnorm(., 0.11, sqrt(cov[1, 1]))) +
+    xlim(0.08, 0.15)
+
+voc_growth_ci_im <- function(n, tmax, t0, q0=1e-4, r, level=0.95) {
+    im <- info_mat(n, tmax, t0, q0, r)
+    cov <- solve(im)
+    Z <- qnorm((1 - level)/2, lower.tail=FALSE)
+    Z * sqrt(cov[1, 1])
+}
+
+# dumb algorithm that has the benefit that n>1 always errs on the too larger side, 
+# within an error tolerance of `etol`
+find_sample_size <- function(tmax, t0, q0, r, level=0.95, error=0.05, etol=1e-3) {
+    n <- 1
+    err <- voc_growth_ci_im(n, tmax, t0, q0, r, level)
+    while (err > error) {
+        n <- 2*n
+        err <- voc_growth_ci_im(n, tmax, t0, q0, r, level)
+    }
+    while (abs(err-error) > etol) { # now walk backwards to an exact n
+        n <- n-1
+        err <- voc_growth_ci_im(n, tmax, t0, q0, r, level)
+    }
+    return(n)
+}
+
+# TODO: seems way to big for tmax=20. I guess because info mat is so skewed there's no way to get
+# within the bounds assumed during MC?
+# That doesn't make sense though because both eventually found an error small enough that the 
+# bounds don't matter
+nopt <- find_sample_size(20, 4.99, 1e-4, 0.12)
+nopt*20
+
+cov <- solve(info_mat(nopt, 20, 5.1, 1e-4, 0.12))
+mle_approx <- MASS::mvrnorm(1000, c(0.11, 5.1), cov)
+colnames(mle_approx) <- c("r", "t0")
+
+mle_approx |> 
+    as_tibble() |> 
+    ggplot(aes(r, t0)) +
+    geom_density_2d()
+
+ggplot() +
+    geom_function(fun=~dnorm(., 0.11, sqrt(cov[1, 1]))) +
+    xlim(0.02, 0.2)
+
+# TODO: this classic version throws out all data before tmax.
+# question is, can you get smaller CIs sometimes by using all data and calculating
+# q_mle = f(mle) ?
+voc_fin_prev_ci_im1 <- function(n, tmax, t0, q0=1e-4, r, level=0.95) {
+    qmax <- final_prevalence(tmax, t0, q0, r)
+    var <- (qmax*(1-qmax)) / n
+    1 / im
+}
+
+voc_fin_prev_ci_im2 <- function(n, tmax, t0, q0=1e-4, r, level=0.95) {
+    im <- info_mat(n, tmax, t0, q0=1e-4, r)
     
-    mle <- furrr::future_map_dfr(y, \(y) gm_proflik_optim(y, sim_true$n, sim_true$q0, ...))
-    qmax_mle <- map2_dbl(mle$t0, mle$r, \(t0, r) final_prevalence(sim_true$tmax, t0, sim_true$q0, r))
-    
-    quants <- c((1 - level)/2, (1 + level)/2)
-    ci <- quantile(qmax_mle, quants)
-    return(list(
-        y=y,
-        mle=qmax_mle,
-        ci=ci,
-        error=max(abs(ci - sim_true$qmax)),
-        cv=sd(qmax_mle) / sim_true$qmax,
-        cv_obs=sd(qmax_mle) / mean(qmax_mle)
-    ))
 }
 
 sim_true <- simulate_data(35, 1000, 5, 1e-4, 0.12, nsim=10000)
 
-plan(multisession, workers=8)
-res_growth <- voc_growth_ci_mc(sim_true, nsim=NULL, r_int=c(0, 1))
+
 
 ggplot(res_growth$mle, aes(r, t0)) +
     geom_density_2d_filled() +
@@ -100,7 +138,10 @@ res_growth$cv
 
 # optimal sample size stuff-------------------------------------------------------
 
-# TODO 4/26: this needs to have an argument for the confidence level (not same as error!)
+# how many samples are needed, *as a function of the final prevalence/days of observation*,
+# to have a 95% chance of an error less than 0.05 for the growth rate, assuming a true growth rate 
+# of 0.1?
+
 # `...` control arguments passed to gm_proflik_optim
 find_sample_size <- function(sim_fun, obj_fun, error=0.05, nmax=10000, ntol=10, etol=1e-3) {
     # first check the case that n* >= nmax
@@ -239,6 +280,3 @@ p4 <- nopt_res_omicron |>
     labs(x="days since introduction", y="total sequences needed", linetype=NULL)
 
 plot_grid(p1, p2, p3, p4, nrow=2, labels=c("A", "B", "C", "D"))
-ggsave("figs/nopt-mc-qmax-err-pt01.pdf", width=9.5, height=5)
-
-
