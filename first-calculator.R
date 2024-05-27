@@ -12,13 +12,18 @@ source("src/growth-model.R")
 
 # `nsim` number of samples from sim to use. Default is to shuffle all of them. Set to NULL to not shuffle
 # `...` control arguments passed to gm_proflik_optim
-voc_growth_ci_mc <- function(sim_true, nsim=length(ytrue), level=0.95, ...) {
+voc_growth_ci_mc <- function(sim, nsim=length(ytrue), level=0.95) {
     if (!is.null(nsim)) {
-        y <- sample(sim_true$y, nsim) # shuffle/downsample true data
+        y <- sample(sim$y, nsim) # shuffle/downsample true data
     } else
-        y <- sim_true$y
+        y <- sim$y
     
-    mle <- furrr::future_map_dfr(y, \(y) gm_proflik_optim(y, sim_true$n, sim_true$q0, ...))
+    # mle <- furrr::future_map_dfr(y, \(y) gm_proflik_optim(y, sim$n, sim$q0, ...))
+    mle <- map_dfr(
+        y, 
+        \(y) gm2_optim(y, sim$n, sim$tmax, sim$q0)
+        # .options=furrr_options(seed=TRUE)
+    )
     
     quants <- c((1 - level)/2, (1 + level)/2)
     ci <- quantile(mle$r, quants)
@@ -26,8 +31,8 @@ voc_growth_ci_mc <- function(sim_true, nsim=length(ytrue), level=0.95, ...) {
         y=y,
         mle=mle,
         ci=ci,
-        error=max(abs(ci - sim_true$r)),
-        cv=sd(mle$r) / sim_true$r,
+        error=max(abs(ci - sim$r)),
+        cv=sd(mle$r) / sim$r,
         cv_obs=sd(mle$r) / mean(mle$r)
     ))
 }

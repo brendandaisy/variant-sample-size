@@ -22,23 +22,68 @@ info_mat <- function(n, tmax, t0, q0, r) {
     return(t(J) %*% O %*% J)
 }
 
-cov <- solve(info_mat(1000, 60, 4.5, 1e-4, 0.11))
-mle_approx <- MASS::mvrnorm(1000, c(0.11, 5.5), cov)
+# TODO: you can use an analytical gradient for the Monte Carlo method!
+
+r <- 0.07 * 7 # work with a weekly example
+n <- 1000
+tmax <- 12
+t0 <- 2.5
+
+q_true <- growth_model2(tmax, t0, 1e-4, r)
+
+ex_dat <- tibble(
+    q=q_true,
+    y=rbinom(length(q), n, q),
+    t=seq_along(y)-1
+)
+
+ll_grid <- expand_grid(t0=seq(-1.5, 6, 0.1), r=seq(0.2, 0.75, 0.02)) |> 
+    mutate(loglik=map2_dbl(t0, r, ~gm2_log_lik(c(.x, .y), ex_dat$y, n, tmax, 1e-4)))
+
+cov <- solve(info_mat(n, 12, 2.5, 1e-4, r))
+mle_approx <- MASS::mvrnorm(10000, c(r, 2.5), cov)
 colnames(mle_approx) <- c("r", "t0")
+
+# err <- voc_growth_ci_im(n, 12, 2.5, 1e-4, r)
 
 mle_approx |> 
     as_tibble() |> 
     ggplot(aes(r, t0)) +
-    geom_density_2d()
+    geom_raster(aes(fill=1.05^loglik), ll_grid, interpolate=TRUE) +
+    stat_ellipse() +
+    stat_ellipse(level=0.5, linetype="dotted") +
+    annotate("point", x=r, y=t0, size=1.8, shape=8) +
+    scale_fill_viridis_c(option="mako") +
+    labs(x="selection coefficient", y="start time") +
+    scale_x_continuous(expand=expansion()) +
+    scale_y_continuous(expand=expansion()) +
+    coord_cartesian(ylim=c(NA, 6)) +
+    theme_half_open() +
+    theme(legend.position="none")
+
+ggsave("figs/example-inf-mat.pdf", width=3, height=3)
+    
+    # annotate("segment", x=r, xend=r+err, y=2.5, yend=2.5)
 
 ggplot() +
     geom_function(fun=~dnorm(., 0.11, sqrt(cov[1, 1]))) +
-    xlim(0.08, 0.15)
+    xlim(0.11-0.05, 0.11+0.05)
+
+sim <- simulate_data(60, 100, 4.5, 1e-4, 0.11)
+
+plan(multisession, workers=8)
+mle_mc <- voc_growth_ci_mc(sim)
+
+ggplot(mle_mc$mle, aes(r, t0)) +
+    geom_density2d_filled()
+
+mle_mc$error
+voc_growth_ci_im(100, 60, 4.5, 1e-4, 0.11)
 
 voc_growth_ci_im <- function(n, tmax, t0, q0=1e-4, r, level=0.95) {
     im <- info_mat(n, tmax, t0, q0, r)
     cov <- solve(im)
-    Z <- qnorm((1 - level)/2, lower.tail=FALSE)
+    Z <- qnorm((1 - level)/2, lower.tail=FALSE) # TODO: can change to lower tail
     Z * sqrt(cov[1, 1])
 }
 
