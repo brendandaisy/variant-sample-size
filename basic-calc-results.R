@@ -109,8 +109,7 @@ ggsave("figs/logistic-growth-blank.pdf", width=4.5, height=2.9)
 # Panel B: comparing asymptotic and Monte Carlo error as n increases--------------
 q0 <- 1e-4
 r <- 0.07
-t0 <- 0 # just in case..
-tmax <- find_tmax(c(0.02, 0.1), 0, q0, r)
+tmax <- find_tmax(c(0.02, 0.1), q0, r)
 
 Z <- -qnorm((1 - 0.95)/2)
 err_form <- expand_grid(tmax, ns=seq(1, 90, 1)) |> 
@@ -118,7 +117,7 @@ err_form <- expand_grid(tmax, ns=seq(1, 90, 1)) |>
     mutate(
         n=ns,
         err_raw={
-            vars <- map_dbl(r, ~var_single_param(n, tmax, 0, q0, .))
+            vars <- map_dbl(r, ~var_single_param(tmax, q0, .))
             Z * sqrt(vars)
         },
         err=err_raw / r * 100
@@ -188,16 +187,17 @@ ggplot(vgrid, aes(tmax, r)) +
     geom_raster(aes(fill=nopt), interpolate=TRUE) +
     geom_contour(aes(z=log10(nopt)), col="gray80", bins=8) +
     # geom_hline(yintercept=r, col="gray70", linetype="31", linewidth=1.05) +
-    scale_fill_viridis_c(option="mako", transform="log10", breaks=scales::breaks_log(7)) +
+    scale_fill_viridis_c(option="mako", transform="log", breaks=scales::breaks_log(7), labels=scales::label_comma()) +
     scale_x_continuous(expand=expansion()) +
     scale_y_continuous(expand=expansion()) +
     labs(
         x="days since variant introduction", 
         y="growth advantage", 
         fill="sequences per day"
-    )
+    ) +
+    theme(legend.key.height=unit(0.8, "cm"))
 
-ggsave("figs/nopt-single-param-tmax.pdf", width=5.2, height=3.7)
+ggsave("figs/nopt-single-param-tmax.pdf", width=4.7, height=3.2)
 
 # information provided per observation and other analytic derivations-------------
 info_per_t <- function(t, r, q0) {
@@ -278,16 +278,15 @@ r <- round(seq(0.02, 0.3, length.out=6), 2)
 vgrid_qmax <- expand_grid(qmax, r) |>
     rowwise() |>
     mutate(
-        tmax=find_tmax(qmax, 0, q0, r),
-        nopt=nopt_single_param(tmax, 0, q0, r, error=r*0.15),
-        nopt_tot=nopt*tmax, 
-        var=var_single_param(nopt, tmax, 0, q0, r)
+        tmax=find_tmax(qmax, q0, r),
+        nopt=nopt_single_param(tmax, q0, r, error=r*0.25),
+        nopt_tot=nopt*tmax
     )
 
-lm(log(vgrid_qmax$nopt) ~ log(vgrid_qmax$qmax))
+lm(log(vgrid_qmax$nopt_tot) ~ log(vgrid_qmax$qmax))
 
 # percentage decrease in samples needed for a 1% increase in prevalence
-(1.01^(-1.314) - 1) * 100
+(1.01^(-1.145) - 1) * 100
 
 vgrid_qmax |>
     group_by(tmax, r) |>
@@ -362,7 +361,7 @@ nopt_g_single_param <- function(t, q0, r, dgdr, error=0.05, level=0.95, tmax=t) 
 
 nopt_prev_classic <- function(t, q0, r, error=0.05, level=0.95) {
     Z <- -qnorm((1 - level)/2)
-    qtrue <- final_prevalence(t, 0, q0, r)
+    qtrue <- final_prevalence(t, q0, r)
     (Z/error)^2 * qtrue * (1 - qtrue)
 }
 
@@ -403,16 +402,17 @@ tibble(t=0:tmax, q=qtrue, vprev) |>
 ggsave("figs/delta-method-ex-b.pdf", width=3.8, height=3.4)
 
 # compare with classic version as function of sample size
-r <- 0.07
+r <- 0.12
 q0 <- 1e-4
 qmax <- seq(0.01, 0.95, length.out=100)
 
-qmax_classic_comp <- tibble(tmax=0:180) |> 
+qmax_classic_comp <- tibble(qmax) |> 
     rowwise() |> 
     mutate(
-        qmax=final_prevalence(tmax, 0, q0, r),
-        `Classic result`=nopt_prev_classic(tmax, q0, r, error=qmax*0.15),
-        `Delta method`=nopt_g_single_param(tmax, q0, r, d_prev_single_param, error=qmax*0.15)
+        tmax=find_tmax(qmax, q0, r),
+        nopt_prev_xs=nopt_prev_classic(tmax, q0, r, error=qmax*0.15),
+        nopt_prev_per=nopt_g_single_param(tmax, q0, r, d_prev_single_param, error=qmax*0.15),
+        nopt_r=nopt_single_param(tmax, q0, r, error=r*0.15)
     ) |> 
     ungroup()
 
@@ -420,22 +420,23 @@ p1 <- tibble(tmax=0:180, q=growth_model2(180, 0, q0, r)) |>
     # slice(-1) |> 
     ggplot(aes(tmax, q)) +
     geom_line(col="gray50", linewidth=1.06) +
-    geom_vline(xintercept=66, linetype="dashed", linewidth=1.04, col="gray50") +
+    geom_vline(xintercept=find_tmax(0.01, q0, r), linetype="dashed", linewidth=1.04, col="gray50") +
     labs(x="days of observation", y="prevalence") +
     theme_half_open()
 
-p2 <- qmax_classic_comp |> 
-    filter(qmax > 0.01) |> 
-    pivot_longer(c(`Classic result`, `Delta method`)) |> 
-    ggplot(aes(tmax, value, col=name)) +
+qmax_classic_comp |> 
+    group_by(tmax) |>
+    slice_min(qmax, n=1) |>
+    ungroup() |>
+    pivot_longer(contains("nopt")) |> 
+    filter(value >= 1/7) |> 
+    ggplot(aes(qmax, value*tmax, col=name)) +
     geom_line(linewidth=1.06) +
-    geom_vline(xintercept=66, linetype="dashed", linewidth=1.04, col="gray50") +
-    scale_y_continuous(
-        transform="log", breaks=10^(0:5)
-        # sec.axis=sec_axis(
-        #     transform=~./ymax,
-        #     breaks=seq(0, 1, 0.2)
-        # )
+    # geom_vline(xintercept=0.01, linetype="dashed", linewidth=1.04, col="gray50") +
+    scale_y_continuous(transform="log", breaks=10^(0:5), labels=scales::label_comma()) +
+    scale_x_continuous(
+        breaks=c(0.01, 0.25, 0.5, 0.75, 0.99), 
+        labels=scales::label_percent()
     ) +
     # scale_x_continuous(sec.axis=dup_axis(
     #     name="prevalence", 
@@ -443,30 +444,36 @@ p2 <- qmax_classic_comp |>
     #     labels=scales::scientific(qmax_labs$l, 1),
     #     guide=guide_axis(angle=45)
     # )) +
-    scale_color_manual(values=c(pal_discrete[c(1, 6)])) +
-    xlim(c(0, 180)) +
-    labs(x="days of observation", y="sequences per day", col=NULL) +
+    scale_color_manual(
+        values=c(pal_discrete[c(7, 1, 3)]),
+        labels=c("prevalence - periodic", "prevalence - cross sect.", "growth advantage")
+    ) +
+    # xlim(c(0, 180)) +
+    labs(x="prevalence", y="total sequences needed", col=NULL) +
     theme_half_open() +
-    theme(legend.position=c(0.52, 0.92))
+    theme(
+        legend.position=c(0.42, 0.84), axis.text=element_text(size=rel(0.8)), 
+        legend.text=element_text(size=rel(0.85)), plot.margin=unit(c(1, 18, 1, 1), "mm")
+    )
 
-plot_grid(p1, p2, nrow=1)
-ggsave("figs/nopt-prev-classic-comp.pdf", width=7.7, height=3.5)
+# plot_grid(p1, p2, nrow=1)
+ggsave("figs/nopt-prev-classic-growth-comp.pdf", width=4.5, height=3.7)
 
 # sample size as func of prevalence for several metrics
 # TODO: the domination/concern times just seem really off. Why would sample sizes be so big??
 nopt_prev_qmax <- tibble(qmax) |>
     rowwise() |>
     mutate(
-        tmax=find_tmax(qmax, 0, q0, r),
-        dom_time=find_tmax(0.5, 0, q0, r),
+        tmax=find_tmax(qmax, q0, r),
+        dom_time=find_tmax(0.5, q0, r),
         nopt_r=nopt_single_param(tmax, q0, r, error=r*0.15),
         nopt_prev=nopt_g_single_param(tmax, q0, r, d_prev_single_param, error=qmax*0.15),
-        nopt_dom=nopt_g_single_param(tmax, q0, r, d_dom_single_param, error=1),
-        nopt_concern=nopt_g_single_param(
-            tmax, q0, r, 
-            \(t, q0, r) d_tmax_single_param(0.05, t, q0, r), 
-            error=1
-        )
+        nopt_dom=nopt_g_single_param(tmax, q0, r, d_dom_single_param, error=0.5)
+        # nopt_concern=nopt_g_single_param(
+        #     tmax, q0, r, 
+        #     \(t, q0, r) d_tmax_single_param(0.05, t, q0, r), 
+        #     error=1
+        # )
     )
 
 nopt_prev_qmax |> 
@@ -481,16 +488,17 @@ nopt_prev_qmax |>
         label=factor(fct_inorder(name), labels=c("growth rate", "prevalence"))
         # label=factor(fct_inorder(name), labels=c("growth rate", "prevalence", "domination time", "concern time"))
     ) |> 
-    ggplot(aes(qmax, value, col=label)) +
+    ggplot(aes(qmax, total, col=label)) +
     geom_line(linewidth=1.2) +
-    scale_color_manual(values=pal_discrete[c(1, 3, 5, 7)]) +
-    scale_y_continuous(transform="log10") +
-    scale_x_continuous(transform="log10", breaks=c(0.01, 0.1, 0.5, 0.99), labels=scales::label_percent()) +
+    scale_color_manual(values=pal_discrete[c(3, 6)]) +
+    scale_y_continuous(transform="log", breaks=10^(0:5), labels=scales::label_comma()) +
+    scale_x_continuous(breaks=c(0.01, 0.25, 0.5, 0.75, 0.99), labels=scales::label_percent()) +
     # scale_x_continuous(transform="logit", breaks=c(0.01, seq(0.1, 0.9, 0.2), 0.99)) +
-    labs(x="prevalence threshold", y="sequences per day", col=NULL) +
-    theme_half_open()
+    labs(x="prevalence threshold", y="total sequences needed", col=NULL) +
+    theme_half_open() +
+    theme(legend.position=c(0.53, 0.89), axis.text=element_text(size=rel(0.8)))
 
-ggsave("figs/nopt-growth-prev-compare.pdf", width=5.3, height=3.75)
+ggsave("figs/nopt-growth-prev-compare.pdf", width=4, height=3.5)
 
 #  nopt by prevalance threshold, including sampling bias--------------------------
 growth_model_bias <- function(tmax, t0, q0, r, b) {
