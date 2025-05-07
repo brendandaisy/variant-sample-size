@@ -45,8 +45,8 @@ q0 <- 1e-4
 r <- 0.12*7
 ```
 
-Then, the optimal number of sequences to collect for an accuracy of
-$15\%$ and with the default $95\%$ confidence, we call the function
+Then, the optimal number of sequences to collect for an accuracy of 15%
+and with the default 95% confidence, we call the function
 
 ``` r
 nopt_single_param(tmax, q0, r, error=0.15*r)
@@ -54,7 +54,7 @@ nopt_single_param(tmax, q0, r, error=0.15*r)
 
     ## [1] 34.95864
 
-If instead we only wanted $25\%$ and with $85\%$ confidence, use
+If instead we only wanted 25% and with 85% confidence, use
 
 ``` r
 nopt_single_param(tmax, q0, r, error=0.25*r, level=0.85)
