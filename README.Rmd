@@ -1,6 +1,5 @@
 ---
 title: "Sample size calculations for tracking genetic variants"
-author: "Bren Case"
 output: github_document
 ---
 
@@ -21,7 +20,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Examples
 
 First we'll need to load the following scripts:
-```{r, echo=FALSE}
+```{r, message=FALSE}
 source("src/growth-model.R")
 source("src/nopt-single-param.R")
 ```
