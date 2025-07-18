@@ -21,12 +21,18 @@ find_tmax <- function(qmax, q0, r) {
     ceiling(-log((1-qmax)/(a*qmax)) / r)
 }
 
-dom_time <- function(t0, q0, r) {
+dom_time <- function(q0, r) {
     # r < 0 and t0 != 0 untested
-    stop("fix me please :(")
+    if (q0 == 0.5)
+        return(0)
+    if (r == 0)
+        return(Inf)
+    # if (q0 < 0.5 & r < 0)
+    #     return(Inf)
+    # if (q0 > 0.5 & r > 0)
+    #     return(0)
     a <- 1/q0 - 1
-    stopifnot("r must be nonzero"=r != 0)
-    ceiling((log(a) + r*t0) / r)
+    ceiling(log(a) / r)
 }
 
 # find_min_r_tmax <- function(qmax, tmax, t0, q0) {

@@ -45,6 +45,7 @@ nopt_multiple_regions_alt <- function(tmax, q0, r, M, n_prop, power, level) {
     crit_t <- qchisq(1-level, M-1) # critical value we need tstat to exceed to reject null
     
     n <- 1
+    # to update the tstat, multiply by n cause can pull out the inverse C * Sigma C'
     target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
     while (target_prob < power) {
         n <- 2*n
@@ -55,12 +56,15 @@ nopt_multiple_regions_alt <- function(tmax, q0, r, M, n_prop, power, level) {
     n <- n - floor(n_rem/2) # half point between n (too big) and n/2 (too small)
     while (n_rem > 1) {
         target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
-        n_rem <- floor(n_rem/2)
+        print(target_prob)
         if (target_prob > power) # n too big
             n <- n - n_rem
         else # n too small
             n <- n + n_rem
+        n_rem <- floor(n_rem/2)
+        print(n_rem)
     }
+    
     return(n)
 }
 
@@ -102,14 +106,15 @@ sd <- sqrt(sum(vc/(n_fact*n_rate)))
 
 #  Now for power with multiple regions--------------------------------------------
 
-r <- c(0.12, 0.07, 0.07)
+r <- c(0.12, 0.07)
 q0 <- 1e-4
 tmax <- 60
-n_prop <- c(1/4, 1/2, 1/4)
+n_prop <- c(1/2, 1/2)
 
-nopt_multiple_regions(tmax, q0, r, 3, n_prop, H0_true=FALSE, power=0.8)
+nopt_multiple_regions(tmax, q0, r, 2, H0_true=FALSE, power=0.8)
 
-sd <- sqrt(sum(vc/(305*n_prop)))
+vc <- diag(map_dbl(r, ~var_single_param(tmax, q0, .)))
+sd <- sqrt(sum(vc/(30*n_prop)))
 crit <- qnorm(0.025, 0, sd)
 pnorm(crit, r[2]-r[1], sd) # yay!
 
