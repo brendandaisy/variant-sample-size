@@ -4,44 +4,50 @@ library(cowplot)
 source("src/growth-model.R")
 source("src/nopt-single-param.R")
 
-# i.e. "right sided" hypothesis r > 0
-# TODO: notice level is reversed from orig. too
-nopt_power_right <- function(tmax, q0, r, power=0.8, level=0.05) {
-    s2 <- var_single_param(tmax, q0, r)
-    Z1 <- qnorm(1-level) # notice one sided this time
-    Z2 <- qnorm(power)
-    s2 / r^2 * (Z1 + Z2)^2
+## Code to test whether the framework matches the pairwise normals implementation
+## in the two region case:
+
+# r <- c(0.12, 0.07)
+# q0 <- 1e-4
+# tmax <- 60
+# n_prop <- c(1/2, 1/2)
+# 
+# nopt_multiple_regions(tmax, q0, r, 2, H0_true=FALSE, power=0.8)
+# 
+# vc <- diag(map_dbl(r, ~var_single_param(tmax, q0, .)))
+# sd <- sqrt(sum(vc/(30*n_prop)))
+# crit <- qnorm(0.025, 0, sd)
+# pnorm(crit, r[2]-r[1], sd) # yay!
+
+# nopt_power_right <- function(tmax, q0, r, power=0.8, level=0.05) {
+#     s2 <- var_single_param(tmax, q0, r)
+#     Z1 <- qnorm(1-level) # notice one sided this time
+#     Z2 <- qnorm(power)
+#     s2 / r^2 * (Z1 + Z2)^2
+# }
+# TODO: use me!
+wald_stat <- function(tmax, q0, r, M) {
+    vc <- diag(map2_dbl(q0, r, ~var_single_param(tmax, .x, .y)))
+    C <- cbind(rep(-1, M-1), diag(1, M-1))
+    W <- solve(C %*% vc %*% t(C))
+    t(C %*% r) %*% W %*% (C %*% r) # test statistic with n=1 samples
 }
 
-q0 <- 1e-4
-r <- 0.11
-tmax <- 40
-
-nopt_power_right(tmax, q0, r, power=0.8)
-nopt_single_param(tmax, q0, r, error=0.05)
-
-nopt_multiple_regions <- function(tmax, q0, r, M, n_prop=rep(1/M, M), 
-                                  H0_true=TRUE, power=0.8, level=0.05) {
+nopt_multiple_regions <- function(tmax, q0, r_alt, M, n_prop=rep(1/M, M), power=0.8, level=0.05) {
     if (!isTRUE(all.equal(sum(n_prop), 1)))
         stop("n_prop must be a valid probability vector")
-    if (length(r) == 1) {
-        r <- rep(r, M)
+    if (length(r_alt) == 1) {
+        r_alt <- rep(r_alt, M)
     }
     if (length(q0) == 1)
         q0 <- rep(q0, M)
-    if (H0_true)
-        ret <- nopt_multiple_regions_null(tmax, q0, r, M, n_prop, power, level)
-    else
-        ret <- nopt_multiple_regions_alt(tmax, q0, r, M, n_prop, power, level)
-    
-    return(ret)
-}
+    if (length(r_alt) != M | length(q0) != M | length(n_prop) != M)
+        stop("incompatible number of regions across r, q0, n_prop")
 
-nopt_multiple_regions_alt <- function(tmax, q0, r, M, n_prop, power, level) {
-    vc <- diag(map2_dbl(q0, r, ~var_single_param(tmax, .x, .y)))
+    vc <- diag(map2_dbl(q0, r_alt, ~var_single_param(tmax, .x, .y)))
     C <- cbind(rep(-1, M-1), diag(1, M-1))
     W <- solve(C %*% (vc/n_prop) %*% t(C))
-    tstat <- t(C %*% r) %*% W %*% (C %*% r) # test statistic with n=1 samples
+    tstat <- t(C %*% r_alt) %*% W %*% (C %*% r_alt) # test statistic with n=1 samples
     crit_t <- qchisq(1-level, M-1) # critical value we need tstat to exceed to reject null
     
     n <- 1
@@ -56,18 +62,91 @@ nopt_multiple_regions_alt <- function(tmax, q0, r, M, n_prop, power, level) {
     n <- n - floor(n_rem/2) # half point between n (too big) and n/2 (too small)
     while (n_rem > 1) {
         target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
-        print(target_prob)
         if (target_prob > power) # n too big
             n <- n - n_rem
         else # n too small
             n <- n + n_rem
         n_rem <- floor(n_rem/2)
-        print(n_rem)
     }
     
     return(n)
+    # if (H0_true)
+    #     ret <- nopt_multiple_regions_null(tmax, q0, r, M, n_prop, power, level)
+    # else
+    #     ret <- nopt_multiple_regions_alt(tmax, q0, r, M, n_prop, power, level)
+    # 
+    # return(ret)
 }
 
+# `level` is our desired type I error!
+power_multiple_regions <- function(tmax, q0, r_alt, M, n, level=0.05) {
+    if (length(r_alt) == 1) {
+        r_alt <- rep(r_alt, M)
+    }
+    if (length(q0) == 1)
+        q0 <- rep(q0, M)
+    if (length(r_alt) != M | length(q0) != M | length(n) != M)
+        stop("incompatible number of regions across r_alt, q0, n_prop")
+    
+    vcn <- diag(map2_dbl(q0, r_alt, ~var_single_param(tmax, .x, .y))) / n
+    # ^ notice already adjusting for sampling size / proportions
+    C <- cbind(rep(-1, M-1), diag(1, M-1))
+    W <- solve(C %*% vcn %*% t(C))
+    tstat <- t(C %*% r_alt) %*% W %*% (C %*% r_alt) # test statistic with reported n
+    
+    crit_t <- qchisq(1-level, M-1) # critical value we need tstat to exceed to reject null
+    beta <- pchisq(crit_t, M-1, ncp=tstat)
+    1 - beta
+}
+
+# nopt_multiple_regions_alt <- function(tmax, q0, r, M, n_prop, power, level) {
+#     vc <- diag(map2_dbl(q0, r, ~var_single_param(tmax, .x, .y)))
+#     C <- cbind(rep(-1, M-1), diag(1, M-1))
+#     W <- solve(C %*% (vc/n_prop) %*% t(C))
+#     tstat <- t(C %*% r) %*% W %*% (C %*% r) # test statistic with n=1 samples
+#     crit_t <- qchisq(1-level, M-1) # critical value we need tstat to exceed to reject null
+#     
+#     n <- 1
+#     # to update the tstat, multiply by n cause can pull out the inverse C * Sigma C'
+#     target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
+#     while (target_prob < power) {
+#         n <- 2*n
+#         target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
+#     }
+#     
+#     n_rem <- n - n/2
+#     n <- n - floor(n_rem/2) # half point between n (too big) and n/2 (too small)
+#     while (n_rem > 1) {
+#         target_prob <- pchisq(crit_t, M-1, ncp=n*tstat, lower.tail=FALSE)
+#         if (target_prob > power) # n too big
+#             n <- n - n_rem
+#         else # n too small
+#             n <- n + n_rem
+#         n_rem <- floor(n_rem/2)
+#     }
+#     
+#     return(n)
+# }
+
+###Two? example scenarios which we will present for the MA data:
+
+## Determine whether a variant, newly established in region A, has an inflated
+# growth advantage compared to other regions
+M <- 3 # num counties
+n_prop <- rep(1, M) / M # assume even sampling
+
+## Assume an Omicron-like r is detected in A, and what to know if it ends up 
+## being as bad in other regions
+## Specify the assumed r in A, which has reached 5%, and is has now reached 0.1% in others
+r0 <- 0.12
+r <- c(r0, rep(r0-r0*0.15, M-1))
+q0 <- c(0.05, rep(1e-3, M-1))
+# q0 <- c(0.05, 1e-3, 0.01, 1e-4)
+tmax <- 30
+
+nopt_multiple_regions(tmax, q0, r, M, n_prop) / M # samples per region
+
+###
 r <- c(0.11, 0.11)
 q0 <- 1e-4
 tmax <- 80
@@ -89,20 +168,6 @@ ggplot(nopt_2reg_res, aes(np1, nopt)) +
     # coord_cartesian(ylim=c(0, 2000))
 
 nopt_multiple_regions(tmax, q0, r, 2, n_prop)
-
-vc <- diag(map_dbl(r, ~var_single_param(tmax, q0, .)))
-C <- matrix(c(-1, 1), nrow=1)
-
-wald_info <- solve(C %*% (vc/n_prop) %*% t(C))
-
-tstat <- 5*t(C %*% r) %*% wald_info %*% (C %*% r)
-
-
-pf(tstat, 1, 259-2, lower.tail=FALSE)
-pchisq(tstat, 1, lower.tail=FALSE) 
-
-sd <- sqrt(sum(vc/(n_fact*n_rate)))
-2*pnorm(r[2]-r[1], 0, sd) # matches for M=2 version!
 
 #  Now for power with multiple regions--------------------------------------------
 

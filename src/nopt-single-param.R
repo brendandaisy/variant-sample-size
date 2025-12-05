@@ -7,13 +7,49 @@ var_single_param <- function(tmax, q0, r) {
     return(1 / Ir)
 }
 
-nopt_single_param <- function(tmax, q0, r, error=0.05, level=0.05) {
+nopt_single_param <- function(tmax, q0, r, error=0.15*r, level=0.05) {
     vr <- var_single_param(tmax, q0, r)
     Z <- qnorm(1 - level/2)
     return((Z/error)^2 * vr)
 }
 
-nopt_g_single_param <- function(t, q0, r, dgdr, error=0.05, level=0.05, tmax=t) { # generally would assume we only observe up to t as well
+nopt_tmin <- function(n, q0, r, do_prev=FALSE, error=0.15*r, level=0.05, max_search=1e4) {
+    if (!do_prev) {
+        t_big <- function(tmax) 
+            (qnorm(1 - level/2)*sqrt(var_single_param(tmax, q0, r)/n)) <= error
+    } else {
+        t_big <- function(tmax) {
+            prev <- final_prevalence(tmax, q0, r) # find prevalence for current t
+            err <- prev * error # find the error required for current prevalence
+            se <- sqrt(var_single_param(tmax, q0, r)/n)*d_prev_single_param(tmax, q0, r)
+            qnorm(1 - level/2) * se <= err
+        }
+    }
+    
+    t <- 1
+    while (!t_big(t)) {
+        t <- 2*t
+        if (t >= max_search) {
+            warning("Maximum allowed time value exceeded. Returning NA")
+            return(NA)
+        }
+    }
+    
+    t_rem <- t - t/2
+    t <- t - floor(t_rem/2) # half point between t (too big) and t/2 (too small)
+    while (t_rem > 1) {
+        if (t_big(t))
+            t <- t - t_rem
+        else # t too small
+            t <- t + t_rem
+        t_rem <- floor(t_rem/2)
+    }
+    
+    return(t)
+}
+
+
+nopt_g_single_param <- function(t, q0, r, dgdr, error=0.15*r, level=0.05, tmax=t) { # generally would assume we only observe up to t as well
     vr <- var_single_param(tmax, q0, r)
     vg <- vr * dgdr(t, q0, r)^2
     Z <- qnorm(1 - level/2)
@@ -38,7 +74,7 @@ d_tmax_single_param <- function(q, t, q0, r) {
     -log(-(q - 1)/(a*q))/r^2
 }
 
-nopt_prev_classic <- function(t, q0, r, error=0.05, level=0.05) {
+nopt_prev_classic <- function(t, q0, r, error=0.15*r, level=0.05) {
     Z <- qnorm(1 - level/2)
     qtrue <- final_prevalence(t, q0, r)
     (Z/error)^2 * qtrue * (1 - qtrue)

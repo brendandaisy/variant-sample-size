@@ -35,6 +35,21 @@ dom_time <- function(q0, r) {
     ceiling(log(a) / r)
 }
 
+info_per_t <- function(t, q0, r) {
+    a <- 1/q0 - 1
+    eterm <- exp(-r*t)
+    (t^2*a*eterm) / (1 + a*eterm)^2
+}
+
+# solve for where the derivative of I_t(r) == 0 in t
+# f is said derivative
+info_root_t <- function(q0, r) {
+    a <- 1/q0 - 1
+    tmax <- find_tmax(0.99, q0, r)
+    f <- function(t) (a*t*exp(r*t) * (a*(r*t + 2) + exp(r*t)*(2 - r*t)))/(a + exp(r*t))^3
+    uniroot(f, c(1, tmax), tol=0.00001)
+}
+
 # find_min_r_tmax <- function(qmax, tmax, t0, q0) {
 #     a <- 1/q0 - 1
 # }
